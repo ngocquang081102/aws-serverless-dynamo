@@ -1,0 +1,11 @@
+fastapi==0.115.0
+mangum==0.17.0
+boto3==1.43.68
+pydantic==2.9.0
+
+# Local development only — not needed in Lambda.
+# If you sign in with `aws login` (temporary cached credentials) rather than
+# static access keys, boto3 needs the AWS CRT to read that cache:
+#     pip install "botocore[crt]"
+# Lambda gets its credentials from the execution role, so the deployed
+# function never needs this.

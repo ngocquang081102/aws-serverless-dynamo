@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Feedback API - a serverless starter project.
+  Lambda (the app) + API Gateway (the HTTP front door) + DynamoDB (the database).
+
+# Global settings applied to all functions below.
+Globals:
+  Function:
+    Timeout: 15
+    MemorySize: 256
+    Runtime: python3.12
+
+Resources:
+
+  # ---- The database ----
+  FeedbackTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: id
+        Type: String
+      # No TableName on purpose: CloudFormation generates a unique one, so you can
+      # deploy a second stack (dev/prod) without a name collision. The Lambda finds
+      # it via the TABLE_NAME environment variable below.
+      #
+      # With no ProvisionedThroughput set, SimpleTable defaults to PAY_PER_REQUEST —
+      # you're billed per read/write (Free Tier friendly), not for idle capacity.
+
+  # ---- The app (Lambda) + its HTTP API ----
+  FeedbackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: app/
+      Handler: main.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref FeedbackTable
+      # Grant the function permission to read/write ONLY this table.
+      # This is least-privilege IAM in practice — good SA habit.
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedbackTable
+      Events:
+        ApiRoot:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+        ApiProxy:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Description: "Base URL of your live Feedback API"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
