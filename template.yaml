@@ -36,6 +36,9 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref FeedbackTable
+          # API Gateway serves this app under the /Prod stage, so FastAPI needs
+          # the prefix to build working links on the /docs page.
+          ROOT_PATH: /Prod
       # Grant the function permission to read/write ONLY this table.
       # This is least-privilege IAM in practice — good SA habit.
       Policies:

@@ -8,7 +8,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from mangum import Mangum
 
-app = FastAPI(title="Feedback API")
+# Behind API Gateway the app is served under a stage prefix (e.g. /Prod), so the
+# links FastAPI generates for /docs must include it. SAM sets ROOT_PATH in the
+# cloud; locally it's empty, so uvicorn keeps serving everything from /.
+app = FastAPI(title="Feedback API", root_path=os.environ.get("ROOT_PATH", ""))
 
 # DynamoDB table name is passed in as an environment variable by SAM.
 TABLE_NAME = os.environ.get("TABLE_NAME", "FeedbackTable")

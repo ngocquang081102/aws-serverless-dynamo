@@ -279,6 +279,8 @@ difference *is* the lesson. Set a phone reminder before you start.
 | `Unable to locate credentials` and the CLI fails too | Your session expired — run `aws login` again |
 | `sam local` / `sam build` hangs or errors on Docker | Docker Desktop isn't running |
 | Resources missing in the console | Wrong region — set the console's region selector to **Singapore** |
+| `/docs` says "Failed to load API definition", 403 on `/openapi.json` | API Gateway serves the app under the `/Prod` stage. FastAPI needs `root_path` to generate links that include it — set via the `ROOT_PATH` env var in `template.yaml` |
+| 403 from the API generally | API Gateway returns 403 (not 404) for a path that matches no route. Usually a wrong path, not a credentials problem |
 | Deploy fails: stack in `ROLLBACK_COMPLETE` | Failed first-ever create. `sam delete --stack-name feedback-api-serverless`, then deploy again |
 
 ---
