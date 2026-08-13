@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Feedback API on ECS Fargate - the container version of the same app,
+  talking to the same DynamoDB table as the serverless stack.
+
+  Deliberately minimal: no load balancer, no NAT gateway. The task gets a
+  public IP you hit directly. Roughly 1.4 cents/hour. Delete the stack when done.
+
+  Note this is plain CloudFormation - no "Transform" line, because there is no
+  SAM shorthand for ECS. Every resource below is written out in full, which is
+  why this file is three times the length of template.yaml.
+
+Parameters:
+
+  ImageUri:
+    Type: String
+    Description: >
+      Full ECR image URI including tag, e.g.
+      122066462950.dkr.ecr.ap-southeast-1.amazonaws.com/feedback-api:v1
+
+  TableName:
+    Type: String
+    Description: >
+      Name of the DynamoDB table created by the serverless stack. Passed in as a
+      parameter (rather than imported) so that deleting this stack can never be
+      blocked by the other one.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-09956764f30b7e1ba
+    Description: Your account's default VPC in ap-southeast-1
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Default: "subnet-0f0c55d849d837047,subnet-03a6917e1e63a0eee,subnet-0b36c9c6f3dafc87c"
+    Description: Public subnets of the default VPC (one per availability zone)
+
+Resources:
+
+  # ---- Where container output goes ----
+  # Retention is set so logs don't accumulate forever. Without RetentionInDays
+  # CloudWatch keeps them indefinitely, which is a slow, quiet cost.
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/feedback-api
+      RetentionInDays: 7
+
+  # ---- The cluster ----
+  # For Fargate this is just a logical grouping. There are no servers in it -
+  # you are not provisioning capacity, only a namespace for services and tasks.
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: feedback-api-cluster
+
+  # ---- Two roles, for two different actors ----
+
+  # The ECS *platform* uses this to pull your image from ECR and ship logs to
+  # CloudWatch. Your application code never sees these permissions.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # Your *application* uses this. It is the exact equivalent of the Lambda
+  # execution role: boto3 inside the container picks it up automatically, with
+  # no credentials passed in and nothing to expire.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}"
+
+  # ---- Network access ----
+  # Port 8000 open to the internet. Acceptable for a short-lived test; a real
+  # deployment would put a load balancer in front and allow traffic only from it.
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound HTTP to the feedback-api container
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: Public access to the app
+
+  # ---- What to run ----
+  # The task definition is a blueprint, not a running thing - the ECS equivalent
+  # of a container image plus its runtime settings.
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: feedback-api
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: "256"      # 0.25 vCPU - the smallest Fargate size
+      Memory: "512"   # 0.5 GB
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: feedback-api
+          Image: !Ref ImageUri
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: TABLE_NAME
+              Value: !Ref TableName
+            # Unlike Lambda, ECS does not set a region for you.
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            # No ROOT_PATH here: there is no API Gateway stage prefix, so the
+            # app is served from / and /docs works without adjustment.
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  # ---- Keep one copy running ----
+  # The service is what makes this different from running a container by hand:
+  # if the task crashes, ECS starts a replacement.
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: feedback-api
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          # ENABLED is what avoids needing a NAT gateway. Without a public IP
+          # the task could not reach ECR to pull its own image.
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+
+Outputs:
+
+  ClusterName:
+    Description: ECS cluster name
+    Value: !Ref Cluster
+
+  ServiceName:
+    Description: ECS service name
+    Value: !GetAtt Service.Name
+
+  GetPublicIpCommand:
+    Description: Run this to find the task's public IP (it changes on restart)
+    Value: !Sub >-
+      aws ecs list-tasks --cluster ${Cluster} --region ${AWS::Region}

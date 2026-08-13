@@ -1,11 +1,12 @@
 import os
 import time
 import uuid
+from decimal import Decimal
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from mangum import Mangum
 
 # Behind API Gateway the app is served under a stage prefix (e.g. /Prod), so the
@@ -35,8 +36,29 @@ def get_table():
 
 
 class FeedbackIn(BaseModel):
+    # extra="allow" keeps any field the client sends beyond the two declared
+    # below. Pydantic's default is to silently discard them; this makes the
+    # endpoint accept arbitrary JSON so you can see how DynamoDB stores it.
+    model_config = ConfigDict(extra="allow")
+
     author: str
     message: str
+
+
+def to_dynamo(value):
+    """Convert Python values into what DynamoDB accepts.
+
+    DynamoDB has one numeric type and boto3 refuses Python floats outright,
+    because binary floats can't round-trip decimal values exactly. Decimal is
+    the required substitute. Lists and dicts are walked so nested JSON works.
+    """
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, list):
+        return [to_dynamo(v) for v in value]
+    if isinstance(value, dict):
+        return {k: to_dynamo(v) for k, v in value.items()}
+    return value
 
 
 @app.get("/")
@@ -46,10 +68,12 @@ def health():
 
 @app.post("/feedback")
 def create_feedback(item: FeedbackIn):
+    # Spread the client's fields first so that "id" and "created_at" below
+    # always win — otherwise a caller could supply an id and overwrite an
+    # existing record, since put_item replaces any item with the same key.
     record = {
+        **to_dynamo(item.model_dump()),
         "id": str(uuid.uuid4()),
-        "author": item.author,
-        "message": item.message,
         "created_at": int(time.time()),
     }
     try:
