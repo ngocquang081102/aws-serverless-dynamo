@@ -63,7 +63,7 @@ def to_dynamo(value):
 
 @app.get("/")
 def health():
-    return {"status": "ok", "service": "feedback-api"}
+    return {"status": "ok", "service": "feedback-api", "deployed_via": "github-oidc"}
 
 
 @app.post("/feedback")
