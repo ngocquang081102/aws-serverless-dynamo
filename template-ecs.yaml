@@ -16,7 +16,7 @@ Parameters:
     Type: String
     Description: >
       Full ECR image URI including tag, e.g.
-      122066462950.dkr.ecr.ap-southeast-1.amazonaws.com/feedback-api:v1
+      123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/feedback-api:v1
 
   TableName:
     Type: String
@@ -27,13 +27,15 @@ Parameters:
 
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Default: vpc-09956764f30b7e1ba
-    Description: Your account's default VPC in ap-southeast-1
+    Description: >
+      Your account's default VPC in ap-southeast-1. CloudFormation renders this
+      as a dropdown populated from your account, so there is no ID to look up.
 
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
-    Default: "subnet-0f0c55d849d837047,subnet-03a6917e1e63a0eee,subnet-0b36c9c6f3dafc87c"
-    Description: Public subnets of the default VPC (one per availability zone)
+    Description: >
+      Public subnets of the default VPC, one per availability zone. Also rendered
+      as a picker at deploy time.
 
 Resources:
 
